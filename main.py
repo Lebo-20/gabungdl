@@ -158,8 +158,11 @@ class AutoBot:
 
             logging.info(f"Processing Drama: {title} ({source})")
             
-            # Initial Notification in Private DM
-            status_msg = await self.uploader.client.send_message(self.admins[0], f"⏳ **Mulai Memproses:** `{title}`")
+            # Simple notification to Admin Bot
+            await self.uploader.client.send_message(self.admins[0], f"⏳ **Sedang Memproses:** `[{source.capitalize()}] {title}`")
+            
+            # Detailed Progress Bar in the CHANNEL
+            status_msg = await self.uploader.client.send_message(self.uploader.channel_id, f"📡 **Mulai Memproses:** `[{source.capitalize()}] {title}`")
 
             video_paths = []
             sub_paths = []
@@ -174,11 +177,11 @@ class AutoBot:
                     episodes = await self.api.get_dramabox_all_episodes(item_id)
 
                 if not episodes:
-                    await status_msg.edit(f"❌ **Error:** Tidak ada episode ditemukan untuk `{title}`")
+                    await status_msg.edit(f"❌ **Error:** Tidak ada episode ditemukan untuk `[{source.capitalize()}] {title}`")
                     return
 
                 total = len(episodes)
-                await status_msg.edit(f"📥 **Downloading:** `{title}`\nProgres: 0/{total} episode")
+                await status_msg.edit(f"📥 **Downloading:** `[{source.capitalize()}] {title}`\nProgres: 0/{total} episode")
 
                 for i, ep in enumerate(episodes):
                     ep_vid_url = ep.get("video_url")
@@ -195,9 +198,9 @@ class AutoBot:
                     
                     if (i + 1) % 5 == 0 or (i + 1) == total:
                         bar = self.get_progress_bar(i+1, total)
-                        await status_msg.edit(f"📥 **Downloading {title}:**\n{bar}\n(Pesan ini akan dihapus setelah selesai)")
+                        await status_msg.edit(f"📥 **Downloading [{source.capitalize()}] {title}:**\n{bar}")
 
-                await status_msg.edit(f"🔀 **Merging & Processing:** `{title}`... (Mohon tunggu)")
+                await status_msg.edit(f"🔀 **Merging & Processing:** `[{source.capitalize()}] {title}`...")
                 start_merge = asyncio.get_event_loop().time()
                 
                 output_fn = f"full_{item_id}.mp4"
@@ -215,10 +218,10 @@ class AutoBot:
                     start_upload = asyncio.get_event_loop().time()
                     
                     async def u_cb(current, total):
-                        await self.progress_callback(current, total, status_msg, f"Uploading {title}", start_upload)
+                        await self.progress_callback(current, total, status_msg, f"Uploading [{source.capitalize()}] {title}", start_upload)
                     
                     caption = (
-                        f"🎬 **{title} (Full Episode)**\n\n"
+                        f"🎬 **[{source.capitalize()}] {title} (Full Episode)**\n\n"
                         f"🆔 ID: `{item_id}`\n"
                         f"📂 Kategori: {category}\n"
                         f"💬 Status Subtitle: {status_sub}\n"
@@ -227,9 +230,9 @@ class AutoBot:
                     success = await self.uploader.upload_video(final_video_path, caption, progress_callback=u_cb)
                     if success:
                         await self.db.mark_processed(item_id, title)
-                        await status_msg.delete() # Hapus Bar Persen setelah selesai
+                        await status_msg.delete() # Hapus Bar Persen dari Channel setelah selesai
                     else:
-                        await status_msg.edit(f"❌ **Upload Gagal:** `{title}`")
+                        await status_msg.edit(f"❌ **Upload Gagal:** `[{source.capitalize()}] {title}`")
             except Exception as e:
                 logging.error(f"Error processing {title}: {e}")
                 await self.notify_admin(f"❌ **Processing Error:** `{title}`\n`{str(e)}`")

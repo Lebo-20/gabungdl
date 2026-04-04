@@ -24,14 +24,18 @@ class Uploader:
 
         try:
             entity = self.channel_id
+            # Upload to main channel
             logging.info(f"Uploading {video_path} to {entity}...")
             
+            # Use send_file with specific attributes to ensure it's a streamable Video
             msg = await self.client.send_file(
                 entity,
                 video_path,
                 caption=caption,
                 supports_streaming=True,
                 progress_callback=progress_callback,
+                video_note=False,
+                force_document=False, # Important: Must be False for streamable video
                 attributes=[types.DocumentAttributeVideo(
                     duration=0,
                     w=1280,
