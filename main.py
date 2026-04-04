@@ -112,67 +112,69 @@ class AutoBot:
         category = item.get("category")
         source = item.get("source")
 
-        # Check duplicates only for AUTO loop? 
-        # For manual search, we might want to process anyway, but let's check DB first.
-        if category == "search":
-             logging.info(f"Manual process requested for: {title}")
-        elif await self.db.is_processed(item_id) or await self.db.is_title_processed(title):
-            return
+        if category != "search":
+            if await self.db.is_processed(item_id) or await self.db.is_title_processed(title):
+                return
 
         logging.info(f"Processing Drama: {title} ({source})")
 
-        # Get all episodes
-        episodes = []
-        if source == "microdrama":
-            episodes = await self.api.get_microdrama_all_episodes(item_id)
-        elif source == "dramabox":
-            episodes = await self.api.get_dramabox_all_episodes(item_id)
-
-        if not episodes: return
-
         video_paths = []
         sub_paths = []
-        for i, ep in enumerate(episodes):
-            ep_vid_url = ep.get("video_url")
-            ep_sub_url = ep.get("subtitle_url")
-            if not ep_vid_url: continue
-            v_path = await self.downloader.download_m3u8(ep_vid_url, f"ep_{i}_{item_id}.mp4")
-            if v_path:
-                video_paths.append(v_path)
-                s_path = ""
-                if ep_sub_url:
-                    s_path = await self.downloader.download(ep_sub_url, f"ep_{i}_{item_id}.srt")
-                    s_path = await self.processor.convert_to_srt(s_path)
-                sub_paths.append(s_path if s_path else None)
-
-        if not video_paths: return
-
-        output_fn = f"full_{item_id}.mp4"
-        merged_raw = await self.processor.merge_multiple_videos(video_paths, f"merged_raw_{item_id}.mp4")
-        
-        status_sub = "no subtitle"
+        merged_raw = ""
         final_video_path = ""
-        if any(sub_paths):
-            status_sub = "hardsub"
-            # Use the first valid subtitle for simplicity (or implement joiner)
-            sub_to_burn = next((s for s in sub_paths if s), None)
-            final_video_path = await self.processor.burn_subtitle(merged_raw, sub_to_burn, output_fn)
-        else:
-            final_video_path = await self.processor.merge_multiple_videos(video_paths, output_fn)
+        
+        try:
+            # Get all episodes
+            episodes = []
+            if source == "microdrama":
+                episodes = await self.api.get_microdrama_all_episodes(item_id)
+            elif source == "dramabox":
+                episodes = await self.api.get_dramabox_all_episodes(item_id)
 
-        if final_video_path and os.path.exists(final_video_path):
-            caption = (
-                f"🎬 **{title} (Full Episode)**\n\n"
-                f"🆔 ID: `{item_id}`\n"
-                f"📂 Kategori: {category}\n"
-                f"💬 Status Subtitle: {status_sub}\n"
-                f"📁 Source: {source.capitalize()}"
-            )
-            success = await self.uploader.upload_video(final_video_path, caption)
-            if success:
-                await self.db.mark_processed(item_id, title)
+            if not episodes: return
 
-        await self.processor.cleanup(video_paths, sub_paths, merged_raw, final_video_path)
+            for i, ep in enumerate(episodes):
+                ep_vid_url = ep.get("video_url")
+                ep_sub_url = ep.get("subtitle_url")
+                if not ep_vid_url: continue
+                v_path = await self.downloader.download_m3u8(ep_vid_url, f"ep_{i}_{item_id}.mp4")
+                if v_path:
+                    video_paths.append(v_path)
+                    s_path = ""
+                    if ep_sub_url:
+                        s_path = await self.downloader.download(ep_sub_url, f"ep_{i}_{item_id}.srt")
+                        s_path = await self.processor.convert_to_srt(s_path)
+                    sub_paths.append(s_path if s_path else None)
+
+            if not video_paths: return
+
+            output_fn = f"full_{item_id}.mp4"
+            merged_raw = await self.processor.merge_multiple_videos(video_paths, f"merged_raw_{item_id}.mp4")
+            
+            status_sub = "no subtitle"
+            if any(sub_paths):
+                status_sub = "hardsub"
+                sub_to_burn = next((s for s in sub_paths if s), None)
+                final_video_path = await self.processor.burn_subtitle(merged_raw, sub_to_burn, output_fn)
+            else:
+                final_video_path = await self.processor.merge_multiple_videos(video_paths, output_fn)
+
+            if final_video_path and os.path.exists(final_video_path):
+                caption = (
+                    f"🎬 **{title} (Full Episode)**\n\n"
+                    f"🆔 ID: `{item_id}`\n"
+                    f"📂 Kategori: {category}\n"
+                    f"💬 Status Subtitle: {status_sub}\n"
+                    f"📁 Source: {source.capitalize()}"
+                )
+                success = await self.uploader.upload_video(final_video_path, caption)
+                if success:
+                    await self.db.mark_processed(item_id, title)
+        except Exception as e:
+            logging.error(f"Error processing {title}: {e}")
+        finally:
+            # ABSOLUTE CLEANUP regardless of success/fail
+            await self.processor.cleanup(video_paths, sub_paths, merged_raw, final_video_path)
 
     async def background_loop(self):
         while self.is_active:
