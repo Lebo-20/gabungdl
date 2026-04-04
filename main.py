@@ -161,8 +161,8 @@ class AutoBot:
             # Simple notification to Admin Bot
             await self.uploader.client.send_message(self.admins[0], f"⏳ **Sedang Memproses:** `[{source.capitalize()}] {title}`")
             
-            # Detailed Progress Bar in the CHANNEL
-            status_msg = await self.uploader.client.send_message(self.uploader.channel_id, f"📡 **Mulai Memproses:** `[{source.capitalize()}] {title}`")
+            # Detailed Progress Bar in the CHANNEL (created later to be at bottom)
+            status_msg = None 
 
             video_paths = []
             sub_paths = []
@@ -189,6 +189,16 @@ class AutoBot:
                 if cover:
                     info_caption = f"🎬 **[{source.capitalize()}] {title}**\n\n📝 **Sinopsis:**\n{desc[:800]}..."
                     await self.uploader.send_photo_with_caption(cover, info_caption)
+
+                # Now create the progress message (so it's AT THE BOTTOM)
+                status_msg = await self.uploader.client.send_message(
+                    self.uploader.channel_id, 
+                    f"📡 **Mulai Memproses:** `[{source.capitalize()}] {title}`"
+                )
+                # Pin progress message temporarily
+                try:
+                    await self.uploader.client.pin_message(self.uploader.channel_id, status_msg, notify=False)
+                except: pass
 
                 total = len(episodes)
                 await status_msg.edit(f"📥 **Downloading:** `[{source.capitalize()}] {title}`\nProgres: 0/{total} episode")
@@ -254,12 +264,19 @@ class AutoBot:
                     
                     if success:
                         await self.db.mark_processed(item_id, title)
-                        await status_msg.delete() 
+                        if status_msg:
+                            try: await self.uploader.client.unpin_message(self.uploader.channel_id, status_msg)
+                            except: pass
+                            await status_msg.delete() 
                     else:
-                        await status_msg.edit(f"❌ **Upload Gagal:** `[{source.capitalize()}] {title}`")
+                        if status_msg:
+                            await status_msg.edit(f"❌ **Upload Gagal:** `[{source.capitalize()}] {title}`")
             except Exception as e:
                 logging.error(f"Error processing {title}: {e}")
                 await self.notify_admin(f"❌ **Processing Error:** `{title}`\n`{str(e)}`")
+                if status_msg:
+                    try: await self.uploader.client.unpin_message(self.uploader.channel_id, status_msg)
+                    except: pass
             finally:
                 await self.processor.cleanup(video_paths, sub_paths, merged_raw, final_video_path)
 
