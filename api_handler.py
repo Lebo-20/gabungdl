@@ -42,17 +42,20 @@ class APIHandler:
             return data["data"]
         return {}
 
-    async def get_microdrama_all_episodes(self, drama_id) -> List[Dict[str, Any]]:
+    async def get_microdrama_all_episodes(self, drama_id) -> Dict[str, Any]:
         url = f"{self.apis['microdrama']}drama/{drama_id}?lang=id&code={self.api_code}"
         data = await self.fetch_json(url)
         episodes = []
+        metadata = {}
         if data.get("success") and "data" in data:
             drama_data = data["data"]
-            # If the API already provides the episode list in the detail call
+            metadata = {
+                "cover": drama_data.get("cover"),
+                "description": drama_data.get("description") or drama_data.get("synopsis") or "No description available.",
+                "title": drama_data.get("title")
+            }
             if "episodes" in drama_data:
                 for ep in drama_data["episodes"]:
-                    # Normalize format to include 'video_url'
-                    # Pick 720P if available
                     v_url = ""
                     if "videos" in ep:
                         for v in ep["videos"]:
@@ -68,17 +71,26 @@ class APIHandler:
                         "subtitle_url": ep.get("subtitle_url"),
                         "episode_no": int(ep.get('episode', 0))
                     })
-            
-            # Ensure chronological order (1, 2, 3...)
             episodes.sort(key=lambda x: x.get('episode_no', 0))
-        return episodes
+        return {"episodes": episodes, "metadata": metadata}
 
-    async def get_dramabox_all_episodes(self, book_id) -> List[Dict[str, Any]]:
+    async def get_dramabox_all_episodes(self, book_id) -> Dict[str, Any]:
+        # Get metadata first
+        meta_url = f"{self.apis['dramabox']}detail?bookId={book_id}&lang=in&code={self.api_code}"
+        meta_data = await self.fetch_json(meta_url)
+        metadata = {}
+        if meta_data.get("code") == 200 and "data" in meta_data:
+            d = meta_data["data"]
+            metadata = {
+                "cover": d.get("cover"),
+                "description": d.get("description") or d.get("bookDescription") or "No description available.",
+                "title": d.get("bookName")
+            }
+
         url = f"{self.apis['dramabox']}allepisode?bookId={book_id}&lang=in&code={self.api_code}"
         data = await self.fetch_json(url)
-        if data.get("code") == 200:
-            return data.get("data", [])
-        return []
+        episodes = data.get("data", []) if data.get("code") == 200 else []
+        return {"episodes": episodes, "metadata": metadata}
 
     async def get_dramabox_homepage(self, page=1) -> List[Dict[str, Any]]:
         url = f"{self.apis['dramabox']}homepage?page={page}&lang=in"

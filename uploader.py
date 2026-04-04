@@ -16,7 +16,18 @@ class Uploader:
         await self.client.start(bot_token=self.bot_token)
         logging.info("Telegram client started.")
 
-    async def upload_video(self, video_path: str, caption: str, progress_callback=None) -> bool:
+    async def send_photo_with_caption(self, photo_url: str, caption: str):
+        try:
+            await self.client.send_file(
+                self.channel_id,
+                photo_url,
+                caption=caption,
+                force_document=False
+            )
+        except Exception as e:
+            logging.error(f"Error sending photo: {e}")
+
+    async def upload_video(self, video_path: str, title: str, meta_info: str, duration: int, progress_callback=None) -> bool:
         if not os.path.exists(video_path):
             logging.error(f"Upload failed: File {video_path} does not exist.")
             if progress_callback: await progress_callback(0, 100) # Reset
@@ -24,20 +35,20 @@ class Uploader:
 
         try:
             entity = self.channel_id
-            # Upload to main channel
             logging.info(f"Uploading {video_path} to {entity}...")
             
-            # Use send_file with specific attributes to ensure it's a streamable Video
+            final_caption = f"🎬 **{title}**\n\n{meta_info}"
+            
             msg = await self.client.send_file(
                 entity,
                 video_path,
-                caption=caption,
+                caption=final_caption,
                 supports_streaming=True,
                 progress_callback=progress_callback,
                 video_note=False,
-                force_document=False, # Important: Must be False for streamable video
+                force_document=False,
                 attributes=[types.DocumentAttributeVideo(
-                    duration=0,
+                    duration=duration,
                     w=1280,
                     h=720,
                     supports_streaming=True

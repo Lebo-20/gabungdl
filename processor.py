@@ -125,6 +125,23 @@ class Processor:
                     pass
         return output_path
 
+    async def get_video_duration(self, video_path: str) -> int:
+        binary = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+        cmd = [
+            binary, "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", video_path
+        ]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            if process.returncode == 0:
+                return int(float(stdout.decode().strip()))
+        except Exception as e:
+            logging.error(f"Error getting duration: {e}")
+        return 0
+
     async def cleanup(self, *files):
         for f in files:
             if isinstance(f, list):

@@ -170,15 +170,25 @@ class AutoBot:
             final_video_path = ""
             
             try:
-                episodes = []
+                res = {}
                 if source == "microdrama":
-                    episodes = await self.api.get_microdrama_all_episodes(item_id)
+                    res = await self.api.get_microdrama_all_episodes(item_id)
                 elif source == "dramabox":
-                    episodes = await self.api.get_dramabox_all_episodes(item_id)
+                    res = await self.api.get_dramabox_all_episodes(item_id)
+
+                episodes = res.get("episodes", [])
+                metadata = res.get("metadata", {})
 
                 if not episodes:
                     await status_msg.edit(f"❌ **Error:** Tidak ada episode ditemukan untuk `[{source.capitalize()}] {title}`")
                     return
+
+                # Send Details Message (Photo + Synopsis)
+                cover = metadata.get("cover")
+                desc = metadata.get("description", "No description available.")
+                if cover:
+                    info_caption = f"🎬 **[{source.capitalize()}] {title}**\n\n📝 **Sinopsis:**\n{desc[:800]}..."
+                    await self.uploader.send_photo_with_caption(cover, info_caption)
 
                 total = len(episodes)
                 await status_msg.edit(f"📥 **Downloading:** `[{source.capitalize()}] {title}`\nProgres: 0/{total} episode")
@@ -201,8 +211,6 @@ class AutoBot:
                         await status_msg.edit(f"📥 **Downloading [{source.capitalize()}] {title}:**\n{bar}")
 
                 await status_msg.edit(f"🔀 **Merging & Processing:** `[{source.capitalize()}] {title}`...")
-                start_merge = asyncio.get_event_loop().time()
-                
                 output_fn = f"full_{item_id}.mp4"
                 merged_raw = await self.processor.merge_multiple_videos(video_paths, f"merged_raw_{item_id}.mp4")
                 
@@ -220,17 +228,24 @@ class AutoBot:
                     async def u_cb(current, total):
                         await self.progress_callback(current, total, status_msg, f"Uploading [{source.capitalize()}] {title}", start_upload)
                     
-                    caption = (
-                        f"🎬 **[{source.capitalize()}] {title} (Full Episode)**\n\n"
-                        f"🆔 ID: `{item_id}`\n"
-                        f"📂 Kategori: {category}\n"
-                        f"💬 Status Subtitle: {status_sub}\n"
-                        f"📁 Source: {source.capitalize()}"
+                    # Get size and duration
+                    size_mb = os.path.getsize(final_video_path) / (1024 * 1024)
+                    duration_sec = await self.processor.get_video_duration(final_video_path)
+                    duration_str = f"{duration_sec // 60}:{duration_sec % 60:02d}"
+                    
+                    meta_info = f"🕒 Durasi: {duration_str}\n📦 Size: {size_mb:.2f} MB\n💬 Sub: {status_sub}"
+                    
+                    success = await self.uploader.upload_video(
+                        final_video_path, 
+                        f"[{source.capitalize()}] {title}", 
+                        meta_info,
+                        duration_sec,
+                        progress_callback=u_cb
                     )
-                    success = await self.uploader.upload_video(final_video_path, caption, progress_callback=u_cb)
+                    
                     if success:
                         await self.db.mark_processed(item_id, title)
-                        await status_msg.delete() # Hapus Bar Persen dari Channel setelah selesai
+                        await status_msg.delete() 
                     else:
                         await status_msg.edit(f"❌ **Upload Gagal:** `[{source.capitalize()}] {title}`")
             except Exception as e:
