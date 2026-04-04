@@ -1,0 +1,8 @@
+downloads/
+outputs/
+*.db
+bot_session.session*
+__pycache__/
+*.log
+error.log
+temp_*

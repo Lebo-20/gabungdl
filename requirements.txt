@@ -1,0 +1,6 @@
+telethon
+aiohttp
+aiosqlite
+aiofiles
+python-dotenv
+ffmpeg

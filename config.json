@@ -1,0 +1,21 @@
+{
+    "api_id": 30653860,
+    "api_hash": "98e0a87077d4fc642ce183dfd7f46a19",
+    "bot_token": "8503716098:AAHcrqOT_S67aYKF8xLE0m-HiXHoc7waIdY",
+    "admins": [5888747846],
+    "admin_id": 5888747846,
+    "channel_id": "https://t.me/+C8rO_ehPFrBlMjJl",
+    "backup_channel_id": "https://t.me/+C8rO_ehPFrBlMjJl",
+    "api_code": "A8D6AB170F7B89F2182561D3B32F390D",
+    "check_interval": 300,
+    "max_connections": 16,
+    "download_dir": "./downloads",
+    "apis": {
+        "microdrama": "https://drakula.dramabos.my.id/api/microdrama/",
+        "idrama": "https://idrama.dramabos.my.id/",
+        "melolo": "https://melolo.dramabos.my.id/api/",
+        "dramabite": "https://dramabite.dramabos.my.id/",
+        "flickreels": "https://flickreels.dramabos.my.id/",
+        "dramabox": "https://dramabox.dramabos.my.id/api/v1/"
+    }
+}
