@@ -1,5 +1,6 @@
 import aiohttp
 import logging
+import asyncio
 from typing import List, Dict, Any
 
 class APIHandler:
@@ -152,9 +153,22 @@ class APIHandler:
 
     # Helper function to consolidate data for downloading
     async def get_new_items(self) -> List[Dict[str, Any]]:
-        # Example logic: just poll a few major ones for novelty
-        items = []
-        items.extend(await self.get_microdrama_list(category="popular"))
-        items.extend(await self.get_dramabox_homepage())
-        # More APIs can be added here with similar pattern
-        return items
+        """Fetches items from all sources and interleaves them to alternate processing."""
+        tasks = [
+            self.get_microdrama_list(category="popular"),
+            self.get_dramabox_homepage()
+        ]
+        
+        # Fetch all sources concurrently
+        all_lists = await asyncio.gather(*tasks)
+        
+        # Interleave the results: [List1[0], List2[0], List1[1], List2[1], ...]
+        interleaved = []
+        max_len = max(len(l) for l in all_lists) if all_lists else 0
+        
+        for i in range(max_len):
+            for l in all_lists:
+                if i < len(l):
+                    interleaved.append(l[i])
+                    
+        return interleaved
