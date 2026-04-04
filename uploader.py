@@ -1,6 +1,7 @@
 from telethon import TelegramClient, events, types
 import logging
 import os
+import aiohttp
 from typing import Dict, Any
 
 class Uploader:
@@ -17,15 +18,29 @@ class Uploader:
         logging.info("Telegram client started.")
 
     async def send_photo_with_caption(self, photo_url: str, caption: str):
+        temp_photo = "temp_cover.jpg"
         try:
-            await self.client.send_file(
-                self.channel_id,
-                photo_url,
-                caption=caption,
-                force_document=False
-            )
+            async with aiohttp.ClientSession() as session:
+                async with session.get(photo_url) as resp:
+                    if resp.status == 200:
+                        content = await resp.read()
+                        with open(temp_photo, "wb") as f:
+                            f.write(content)
+                        
+                        await self.client.send_file(
+                            self.channel_id,
+                            temp_photo,
+                            caption=caption,
+                            force_document=False # Always send as Photo
+                        )
+                        if os.path.exists(temp_photo):
+                            os.remove(temp_photo)
+                    else:
+                        # Fallback to link if download fails
+                        await self.client.send_file(self.channel_id, photo_url, caption=caption, force_document=False)
         except Exception as e:
             logging.error(f"Error sending photo: {e}")
+            if os.path.exists(temp_photo): os.remove(temp_photo)
 
     async def upload_video(self, video_path: str, title: str, meta_info: str, duration: int, progress_callback=None) -> bool:
         if not os.path.exists(video_path):
