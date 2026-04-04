@@ -32,6 +32,7 @@ class AutoBot:
         self.uploader = Uploader(self.config)
         self.check_interval = self.config.get("check_interval", 300)
         self.is_active = True
+        self.semaphore = asyncio.Semaphore(1) # Limit to 1 merge at a time for safety
 
     async def is_admin(self, event):
         sender_id = (await event.get_sender()).id
@@ -127,95 +128,96 @@ class AutoBot:
             logging.error(f"Failed to notify admin: {e}")
 
     async def process_item(self, item):
-        item_id = item.get("id")
-        title = item.get("title")
-        category = item.get("category")
-        source = item.get("source")
+        async with self.semaphore:
+            item_id = item.get("id")
+            title = item.get("title")
+            category = item.get("category")
+            source = item.get("source")
 
-        if category != "search":
-            if await self.db.is_processed(item_id) or await self.db.is_title_processed(title):
-                return
+            if category != "search":
+                if await self.db.is_processed(item_id) or await self.db.is_title_processed(title):
+                    return
 
-        logging.info(f"Processing Drama: {title} ({source})")
-        
-        # Initial Notification
-        status_msg = await self.uploader.client.send_message(self.admins[0], f"⏳ **Mulai Memproses:** `{title}`")
-
-        video_paths = []
-        sub_paths = []
-        merged_raw = ""
-        final_video_path = ""
-        
-        try:
-            # Get all episodes
-            episodes = []
-            if source == "microdrama":
-                episodes = await self.api.get_microdrama_all_episodes(item_id)
-            elif source == "dramabox":
-                episodes = await self.api.get_dramabox_all_episodes(item_id)
-
-            if not episodes:
-                await status_msg.edit(f"❌ **Error:** Tidak ada episode ditemukan untuk `{title}`")
-                return
-
-            total = len(episodes)
-            await status_msg.edit(f"📥 **Downloading:** `{title}` (Total: {total} episode)")
-
-            for i, ep in enumerate(episodes):
-                ep_vid_url = ep.get("video_url")
-                ep_sub_url = ep.get("subtitle_url")
-                if not ep_vid_url: continue
-                
-                # Download
-                v_path = await self.downloader.download_m3u8(ep_vid_url, f"ep_{i}_{item_id}.mp4")
-                if v_path:
-                    video_paths.append(v_path)
-                    s_path = ""
-                    if ep_sub_url:
-                        s_path = await self.downloader.download(ep_sub_url, f"ep_{i}_{item_id}.srt")
-                        s_path = await self.processor.convert_to_srt(s_path)
-                    sub_paths.append(s_path if s_path else None)
-                
-                # Progress update every 10 episodes
-                if (i + 1) % 10 == 0:
-                    await status_msg.edit(f"📥 **Downloading {title}:** {i+1}/{total} episode...")
-
-            if not video_paths:
-                await status_msg.edit(f"❌ **Error:** Gagal mendownload video `{title}`")
-                return
-
-            await status_msg.edit(f"🔀 **Merging & Processing:** `{title}`... (Mohon tunggu)")
-            output_fn = f"full_{item_id}.mp4"
-            merged_raw = await self.processor.merge_multiple_videos(video_paths, f"merged_raw_{item_id}.mp4")
+            logging.info(f"Processing Drama: {title} ({source})")
             
-            status_sub = "no subtitle"
-            if any(sub_paths):
-                status_sub = "hardsub"
-                sub_to_burn = next((s for s in sub_paths if s), None)
-                final_video_path = await self.processor.burn_subtitle(merged_raw, sub_to_burn, output_fn)
-            else:
-                final_video_path = await self.processor.merge_multiple_videos(video_paths, output_fn)
+            # Initial Notification
+            status_msg = await self.uploader.client.send_message(self.admins[0], f"⏳ **Mulai Memproses:** `{title}`")
 
-            if final_video_path and os.path.exists(final_video_path):
-                await status_msg.edit(f"📤 **Uploading:** `{title}` ke Channel...")
-                caption = (
-                    f"🎬 **{title} (Full Episode)**\n\n"
-                    f"🆔 ID: `{item_id}`\n"
-                    f"📂 Kategori: {category}\n"
-                    f"💬 Status Subtitle: {status_sub}\n"
-                    f"📁 Source: {source.capitalize()}"
-                )
-                success = await self.uploader.upload_video(final_video_path, caption)
-                if success:
-                    await self.db.mark_processed(item_id, title)
-                    await status_msg.edit(f"✅ **Selesai!** `{title}` telah diupload.")
+            video_paths = []
+            sub_paths = []
+            merged_raw = ""
+            final_video_path = ""
+            
+            try:
+                # Get all episodes
+                episodes = []
+                if source == "microdrama":
+                    episodes = await self.api.get_microdrama_all_episodes(item_id)
+                elif source == "dramabox":
+                    episodes = await self.api.get_dramabox_all_episodes(item_id)
+
+                if not episodes:
+                    await status_msg.edit(f"❌ **Error:** Tidak ada episode ditemukan untuk `{title}`")
+                    return
+
+                total = len(episodes)
+                await status_msg.edit(f"📥 **Downloading:** `{title}` (Total: {total} episode)")
+
+                for i, ep in enumerate(episodes):
+                    ep_vid_url = ep.get("video_url")
+                    ep_sub_url = ep.get("subtitle_url")
+                    if not ep_vid_url: continue
+                    
+                    # Download
+                    v_path = await self.downloader.download_m3u8(ep_vid_url, f"ep_{i}_{item_id}.mp4")
+                    if v_path:
+                        video_paths.append(v_path)
+                        s_path = ""
+                        if ep_sub_url:
+                            s_path = await self.downloader.download(ep_sub_url, f"ep_{i}_{item_id}.srt")
+                            s_path = await self.processor.convert_to_srt(s_path)
+                        sub_paths.append(s_path if s_path else None)
+                    
+                    # Progress update every 10 episodes
+                    if (i + 1) % 10 == 0:
+                        await status_msg.edit(f"📥 **Downloading {title}:** {i+1}/{total} episode...")
+
+                if not video_paths:
+                    await status_msg.edit(f"❌ **Error:** Gagal mendownload video `{title}`")
+                    return
+
+                await status_msg.edit(f"🔀 **Merging & Processing:** `{title}`... (Mohon tunggu)")
+                output_fn = f"full_{item_id}.mp4"
+                merged_raw = await self.processor.merge_multiple_videos(video_paths, f"merged_raw_{item_id}.mp4")
+                
+                status_sub = "no subtitle"
+                if any(sub_paths):
+                    status_sub = "hardsub"
+                    sub_to_burn = next((s for s in sub_paths if s), None)
+                    final_video_path = await self.processor.burn_subtitle(merged_raw, sub_to_burn, output_fn)
                 else:
-                    await status_msg.edit(f"❌ **Upload Gagal:** `{title}`")
-        except Exception as e:
-            logging.error(f"Error processing {title}: {e}")
-            await self.notify_admin(f"❌ **Processing Error:** `{title}`\n`{str(e)}`")
-        finally:
-            await self.processor.cleanup(video_paths, sub_paths, merged_raw, final_video_path)
+                    final_video_path = await self.processor.merge_multiple_videos(video_paths, output_fn)
+
+                if final_video_path and os.path.exists(final_video_path):
+                    await status_msg.edit(f"📤 **Uploading:** `{title}` ke Channel...")
+                    caption = (
+                        f"🎬 **{title} (Full Episode)**\n\n"
+                        f"🆔 ID: `{item_id}`\n"
+                        f"📂 Kategori: {category}\n"
+                        f"💬 Status Subtitle: {status_sub}\n"
+                        f"📁 Source: {source.capitalize()}"
+                    )
+                    success = await self.uploader.upload_video(final_video_path, caption)
+                    if success:
+                        await self.db.mark_processed(item_id, title)
+                        await status_msg.edit(f"✅ **Selesai!** `{title}` telah diupload.")
+                    else:
+                        await status_msg.edit(f"❌ **Upload Gagal:** `{title}`")
+            except Exception as e:
+                logging.error(f"Error processing {title}: {e}")
+                await self.notify_admin(f"❌ **Processing Error:** `{title}`\n`{str(e)}`")
+            finally:
+                await self.processor.cleanup(video_paths, sub_paths, merged_raw, final_video_path)
 
     async def background_loop(self):
         while self.is_active:
