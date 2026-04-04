@@ -22,16 +22,23 @@ class Uploader:
             return False
 
         try:
+            # Try to resolve the channel entity first
+            # If it's a link, bots might have trouble resolving private ones
+            entity = self.channel_id
+            if isinstance(self.channel_id, str) and "+" in self.channel_id:
+                logging.warning("Channel ID is an invite link. Bots cannot resolve private links automatically.")
+                logging.warning("Please use the numeric Channel ID (e.g., -100...) for better reliability.")
+            
             # Upload to main channel
-            logging.info(f"Uploading {video_path} to {self.channel_id}...")
+            logging.info(f"Uploading {video_path} to {entity}...")
             msg = await self.client.send_file(
-                self.channel_id,
+                entity,
                 video_path,
                 caption=caption,
                 supports_streaming=True,
                 attributes=[types.DocumentAttributeVideo(
-                    duration=0, # Auto-detect if needed
-                    w=1280, # Hardcoded or use ffprobe
+                    duration=0,
+                    w=1280,
                     h=720,
                     supports_streaming=True
                 )]
@@ -46,7 +53,10 @@ class Uploader:
             return True
 
         except Exception as e:
-            logging.error(f"Exception during upload: {e}")
+            err_msg = str(e)
+            logging.error(f"Exception during upload: {err_msg}")
+            if "CheckChatInviteRequest" in err_msg or "restricted" in err_msg:
+                logging.error("CRITICAL: Bot cannot use invite links. Please change channel_id to a numeric ID in config.json")
             return False
 
     async def disconnect(self):

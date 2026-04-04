@@ -212,7 +212,8 @@ class AutoBot:
                         await self.db.mark_processed(item_id, title)
                         await status_msg.edit(f"✅ **Selesai!** `{title}` telah diupload.")
                     else:
-                        await status_msg.edit(f"❌ **Upload Gagal:** `{title}`")
+                        logging.error(f"Upload failed for {title}")
+                        await status_msg.edit(f"❌ **Upload Gagal:** `{title}`\n(Cek log untuk detail: Kemungkinan link channel salah atau file > 2GB)")
             except Exception as e:
                 logging.error(f"Error processing {title}: {e}")
                 await self.notify_admin(f"❌ **Processing Error:** `{title}`\n`{str(e)}`")
