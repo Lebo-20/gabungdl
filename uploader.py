@@ -42,7 +42,7 @@ class Uploader:
             logging.error(f"Error sending photo: {e}")
             if os.path.exists(temp_photo): os.remove(temp_photo)
 
-    async def upload_video(self, video_path: str, title: str, meta_info: str, duration: int, progress_callback=None) -> bool:
+    async def upload_video(self, video_path: str, title: str, meta_info: str, duration: int, width: int = 1280, height: int = 720, thumb: str = None, progress_callback=None) -> bool:
         if not os.path.exists(video_path):
             logging.error(f"Upload failed: File {video_path} does not exist.")
             if progress_callback: await progress_callback(0, 100) # Reset
@@ -52,20 +52,23 @@ class Uploader:
             entity = self.channel_id
             logging.info(f"Uploading {video_path} to {entity}...")
             
-            final_caption = f"🎬 **{title}**\n\n{meta_info}"
+            final_caption = f"**{title}**"
+            if meta_info:
+                final_caption += f"\n\n{meta_info}"
             
             msg = await self.client.send_file(
                 entity,
                 video_path,
                 caption=final_caption,
+                thumb=thumb,
                 supports_streaming=True,
                 progress_callback=progress_callback,
                 video_note=False,
                 force_document=False,
                 attributes=[types.DocumentAttributeVideo(
                     duration=duration,
-                    w=1280,
-                    h=720,
+                    w=width,
+                    h=height,
                     supports_streaming=True
                 )]
             )

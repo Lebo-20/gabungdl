@@ -42,7 +42,8 @@ class Processor:
         cmd = [
             binary, "-i", video_path, "-vf", filter_str,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-            "-c:a", "copy", output_path, "-y"
+            "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", 
+            output_path, "-y"
         ]
         
         process = await asyncio.create_subprocess_exec(
@@ -67,7 +68,8 @@ class Processor:
         
         binary = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
         cmd = [
-            binary, "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path, "-y"
+            binary, "-f", "concat", "-safe", "0", "-i", list_path, 
+            "-c", "copy", "-movflags", "+faststart", output_path, "-y"
         ]
         
         process = await asyncio.create_subprocess_exec(
@@ -125,22 +127,54 @@ class Processor:
                     pass
         return output_path
 
-    async def get_video_duration(self, video_path: str) -> int:
+    async def get_video_info(self, video_path: str) -> dict:
+        """Returns a dictionary with duration, width, and height of the video."""
         binary = "ffprobe.exe" if os.name == "nt" else "ffprobe"
         cmd = [
-            binary, "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", video_path
+            binary, "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height:format=duration",
+            "-of", "json", video_path
         ]
+        info = {"duration": 0, "width": 1280, "height": 720}
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
             if process.returncode == 0:
-                return int(float(stdout.decode().strip()))
+                import json
+                data = json.loads(stdout.decode())
+                if "format" in data:
+                    info["duration"] = int(float(data["format"].get("duration", 0)))
+                if "streams" in data and len(data["streams"]) > 0:
+                    info["width"] = int(data["streams"][0].get("width", 1280))
+                    info["height"] = int(data["streams"][0].get("height", 720))
         except Exception as e:
-            logging.error(f"Error getting duration: {e}")
-        return 0
+            logging.error(f"Error getting video info: {e}")
+        return info
+
+    async def generate_thumbnail(self, video_path: str, output_path: str) -> Optional[str]:
+        """Extracts a thumbnail from the 10% mark of the video."""
+        binary = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+        # Try to get frame at 5 seconds or a bit into the video to avoid black frames
+        cmd = [
+            binary, "-ss", "00:00:05", "-i", video_path,
+            "-vframes", "1", "-q:v", "2", output_path, "-y"
+        ]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            await process.communicate()
+            if process.returncode == 0 and os.path.exists(output_path):
+                return output_path
+        except Exception as e:
+            logging.error(f"Error generating thumbnail: {e}")
+        return None
+
+    async def get_video_duration(self, video_path: str) -> int:
+        info = await self.get_video_info(video_path)
+        return info["duration"]
 
     async def cleanup(self, *files):
         for f in files:

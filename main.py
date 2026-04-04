@@ -228,20 +228,29 @@ class AutoBot:
                     async def u_cb(current, total):
                         await self.progress_callback(current, total, status_msg, f"Uploading [{source.capitalize()}] {title}", start_upload)
                     
-                    # Get size and duration
-                    size_mb = os.path.getsize(final_video_path) / (1024 * 1024)
-                    duration_sec = await self.processor.get_video_duration(final_video_path)
-                    duration_str = f"{duration_sec // 60}:{duration_sec % 60:02d}"
+                    # Get info and generate thumbnail
+                    v_info = await self.processor.get_video_info(final_video_path)
+                    duration_sec = v_info["duration"]
+                    width = v_info["width"]
+                    height = v_info["height"]
                     
-                    meta_info = f"🕒 Durasi: {duration_str}\n📦 Size: {size_mb:.2f} MB\n💬 Sub: {status_sub}"
+                    thumb_path = f"thumb_{item_id}.jpg"
+                    await self.processor.generate_thumbnail(final_video_path, thumb_path)
                     
                     success = await self.uploader.upload_video(
                         final_video_path, 
                         f"[{source.capitalize()}] {title}", 
-                        meta_info,
+                        "", # No meta info
                         duration_sec,
+                        width=width,
+                        height=height,
+                        thumb=thumb_path if os.path.exists(thumb_path) else None,
                         progress_callback=u_cb
                     )
+                    
+                    # Cleanup thumb
+                    if os.path.exists(thumb_path):
+                        os.remove(thumb_path)
                     
                     if success:
                         await self.db.mark_processed(item_id, title)
