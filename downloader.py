@@ -10,17 +10,24 @@ class Downloader:
         if not os.path.exists(self.download_dir):
             os.makedirs(self.download_dir)
 
-    async def download(self, url: str, filename: str, retries: int = 3) -> str:
+    async def download(self, url: str, filename: str, retries: int = 5) -> str:
         output_path = os.path.join(self.download_dir, filename)
-        if os.path.exists(output_path):
-            os.remove(output_path)
+        
+        # Optimization: Skip if file already exists and has content
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            logging.info(f"File {filename} already exists, skipping download.")
+            return output_path
 
         binary = "aria2c.exe" if os.name == "nt" else "aria2c"
         # command: aria2c -x 16 -s 16 -o filename url
+        # Added timeouts to prevent "timeout too fast" issues
         cmd = [
             binary,
             f"-x{self.max_connections}",
             f"-s{self.max_connections}",
+            "--connect-timeout=120",
+            "--timeout=120",
+            "--retry-wait=10",
             "--auto-file-renaming=false",
             "--allow-overwrite=true",
             "-d", self.download_dir,
@@ -42,17 +49,21 @@ class Downloader:
                     logging.info(f"Download completed: {output_path}")
                     return output_path
                 else:
-                    logging.error(f"Download failed: {stderr.decode()}")
+                    err = stderr.decode()
+                    logging.error(f"Download failed: {err}")
             except Exception as e:
                 logging.error(f"Execution error ({binary}): {e}")
             
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
         
         return ""
 
     async def download_m3u8(self, url: str, filename: str) -> str:
+        output_path = os.path.join(self.download_dir, filename)
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            return output_path
+
         if url.endswith(".m3u8"):
-            output_path = os.path.join(self.download_dir, filename)
             binary = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
             cmd = [
                 binary, "-i", url, "-c", "copy", "-bsf:a", "aac_adtstoasc", output_path, "-y"
