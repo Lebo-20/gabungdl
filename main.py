@@ -106,6 +106,26 @@ class AutoBot:
             # Trigger process for this item manually
             asyncio.create_task(self.process_item({"id": item_id, "title": title, "source": source, "category": "search"}))
 
+    async def handle_start(self, event):
+        if not await self.is_admin(event): 
+            await event.reply("❌ Anda tidak memiliki akses ke bot ini.")
+            return
+        await event.reply(
+            "👋 **Selamat datang di Bot Auto Downloader!**\n\n"
+            "Bot ini otomatis memantau drama baru dan menggabungkannya.\n\n"
+            "**Perintah Admin:**\n"
+            "🔍 `/cari <judul>` - Cari drama secara manual\n"
+            "🔄 `/update` - Perbarui bot dari Git\n\n"
+            "Status: **Monitoring Aktif** 🟢"
+        )
+
+    async def notify_admin(self, text):
+        try:
+            # Send to the main admin ID
+            await self.uploader.client.send_message(self.admins[0], text)
+        except Exception as e:
+            logging.error(f"Failed to notify admin: {e}")
+
     async def process_item(self, item):
         item_id = item.get("id")
         title = item.get("title")
@@ -117,6 +137,9 @@ class AutoBot:
                 return
 
         logging.info(f"Processing Drama: {title} ({source})")
+        
+        # Initial Notification
+        status_msg = await self.uploader.client.send_message(self.admins[0], f"⏳ **Mulai Memproses:** `{title}`")
 
         video_paths = []
         sub_paths = []
@@ -131,12 +154,19 @@ class AutoBot:
             elif source == "dramabox":
                 episodes = await self.api.get_dramabox_all_episodes(item_id)
 
-            if not episodes: return
+            if not episodes:
+                await status_msg.edit(f"❌ **Error:** Tidak ada episode ditemukan untuk `{title}`")
+                return
+
+            total = len(episodes)
+            await status_msg.edit(f"📥 **Downloading:** `{title}` (Total: {total} episode)")
 
             for i, ep in enumerate(episodes):
                 ep_vid_url = ep.get("video_url")
                 ep_sub_url = ep.get("subtitle_url")
                 if not ep_vid_url: continue
+                
+                # Download
                 v_path = await self.downloader.download_m3u8(ep_vid_url, f"ep_{i}_{item_id}.mp4")
                 if v_path:
                     video_paths.append(v_path)
@@ -145,9 +175,16 @@ class AutoBot:
                         s_path = await self.downloader.download(ep_sub_url, f"ep_{i}_{item_id}.srt")
                         s_path = await self.processor.convert_to_srt(s_path)
                     sub_paths.append(s_path if s_path else None)
+                
+                # Progress update every 10 episodes
+                if (i + 1) % 10 == 0:
+                    await status_msg.edit(f"📥 **Downloading {title}:** {i+1}/{total} episode...")
 
-            if not video_paths: return
+            if not video_paths:
+                await status_msg.edit(f"❌ **Error:** Gagal mendownload video `{title}`")
+                return
 
+            await status_msg.edit(f"🔀 **Merging & Processing:** `{title}`... (Mohon tunggu)")
             output_fn = f"full_{item_id}.mp4"
             merged_raw = await self.processor.merge_multiple_videos(video_paths, f"merged_raw_{item_id}.mp4")
             
@@ -160,6 +197,7 @@ class AutoBot:
                 final_video_path = await self.processor.merge_multiple_videos(video_paths, output_fn)
 
             if final_video_path and os.path.exists(final_video_path):
+                await status_msg.edit(f"📤 **Uploading:** `{title}` ke Channel...")
                 caption = (
                     f"🎬 **{title} (Full Episode)**\n\n"
                     f"🆔 ID: `{item_id}`\n"
@@ -170,10 +208,13 @@ class AutoBot:
                 success = await self.uploader.upload_video(final_video_path, caption)
                 if success:
                     await self.db.mark_processed(item_id, title)
+                    await status_msg.edit(f"✅ **Selesai!** `{title}` telah diupload.")
+                else:
+                    await status_msg.edit(f"❌ **Upload Gagal:** `{title}`")
         except Exception as e:
             logging.error(f"Error processing {title}: {e}")
+            await self.notify_admin(f"❌ **Processing Error:** `{title}`\n`{str(e)}`")
         finally:
-            # ABSOLUTE CLEANUP regardless of success/fail
             await self.processor.cleanup(video_paths, sub_paths, merged_raw, final_video_path)
 
     async def background_loop(self):
@@ -192,6 +233,7 @@ class AutoBot:
         await self.uploader.start()
         
         # Handlers
+        self.uploader.client.add_event_handler(self.handle_start, events.NewMessage(pattern=r'/start'))
         self.uploader.client.add_event_handler(self.handle_search, events.NewMessage(pattern=r'/cari (.*)'))
         self.uploader.client.add_event_handler(self.handle_update, events.NewMessage(pattern=r'/update'))
         self.uploader.client.add_event_handler(self.handle_callback, events.CallbackQuery)
