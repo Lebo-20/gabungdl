@@ -16,23 +16,20 @@ class Processor:
             return sub_path
         
         srt_path = sub_path.rsplit(".", 1)[0] + ".srt"
-        # use ffmpeg to convert any format to srt
+        binary = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
         cmd = [
-            "ffmpeg", "-i", sub_path, srt_path, "-y"
+            binary, "-i", sub_path, srt_path, "-y"
         ]
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await process.communicate()
+        await process.communicate()
         if process.returncode == 0 and os.path.exists(srt_path):
-            logging.info(f"Converted subtitle to srt: {srt_path}")
             return srt_path
         return None
 
     async def burn_subtitle(self, video_path, sub_path, output_name) -> str:
         output_path = os.path.join(self.output_dir, output_name)
-        # Using ffmpeg for hardsubbing
-        # Custom subtitle styling as requested by the user
         style = (
             "Fontname=Standard Symbols PS,Fontsize=10,Bold=-1,"
             "PrimaryColour=&H00FFFFFF,Outline=1,OutlineColour=&H00000000,"
@@ -41,24 +38,20 @@ class Processor:
         sub_path_fixed = sub_path.replace('\\', '/')
         filter_str = f"subtitles='{sub_path_fixed}':force_style='{style}'"
         
+        binary = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
         cmd = [
-            "ffmpeg", "-i", video_path, "-vf", filter_str,
+            binary, "-i", video_path, "-vf", filter_str,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
             "-c:a", "copy", output_path, "-y"
         ]
         
-        logging.info(f"Processing hardsub: {output_path}")
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await process.communicate()
-        
+        await process.communicate()
         if process.returncode == 0:
-            logging.info(f"Burned subtitles successfully: {output_path}")
             return output_path
-        else:
-            logging.error(f"FFmpeg error burning subtitles: {stderr.decode()}")
-            return ""
+        return ""
 
     async def merge_multiple_videos(self, video_paths: list, output_name: str) -> str:
         if not video_paths:
@@ -67,18 +60,16 @@ class Processor:
         output_path = os.path.join(self.output_dir, output_name)
         list_path = os.path.join(self.output_dir, "concat_list.txt")
         
-        # Create concat list file
         with open(list_path, 'w', encoding='utf-8') as f:
             for path in video_paths:
-                # Use absolute path and escape single quotes for ffmpeg
                 abs_path = os.path.abspath(path).replace('\\', '/')
                 f.write(f"file '{abs_path}'\n")
         
+        binary = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
         cmd = [
-            "ffmpeg", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path, "-y"
+            binary, "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path, "-y"
         ]
         
-        logging.info(f"Merging {len(video_paths)} videos into: {output_path}")
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )

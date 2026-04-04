@@ -15,9 +15,10 @@ class Downloader:
         if os.path.exists(output_path):
             os.remove(output_path)
 
+        binary = "aria2c.exe" if os.name == "nt" else "aria2c"
         # command: aria2c -x 16 -s 16 -o filename url
         cmd = [
-            "aria2c",
+            binary,
             f"-x{self.max_connections}",
             f"-s{self.max_connections}",
             "--auto-file-renaming=false",
@@ -29,37 +30,41 @@ class Downloader:
 
         for i in range(retries):
             logging.info(f"Downloading {filename} (Attempt {i+1}/{retries})")
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await process.communicate()
 
-            if process.returncode == 0:
-                logging.info(f"Download completed: {output_path}")
-                return output_path
-            else:
-                logging.error(f"Download failed: {stderr.decode()}")
-                await asyncio.sleep(5)
+                if process.returncode == 0:
+                    logging.info(f"Download completed: {output_path}")
+                    return output_path
+                else:
+                    logging.error(f"Download failed: {stderr.decode()}")
+            except Exception as e:
+                logging.error(f"Execution error ({binary}): {e}")
+            
+            await asyncio.sleep(5)
         
         return ""
 
     async def download_m3u8(self, url: str, filename: str) -> str:
-        # For M3U8, we might need ffmpeg or aria2c if it handles segmented download
-        # aria2c can download file by file if we parse m3u8, but ffmpeg is more robust
-        # I'll use ffmpeg for m3u8 as fallback but the user explicitly requested aria2c.
-        # If url ends in m3u8, maybe we should use ffmpeg instead.
         if url.endswith(".m3u8"):
             output_path = os.path.join(self.download_dir, filename)
+            binary = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
             cmd = [
-                "ffmpeg", "-i", url, "-c", "copy", "-bsf:a", "aac_adtstoasc", output_path, "-y"
+                binary, "-i", url, "-c", "copy", "-bsf:a", "aac_adtstoasc", output_path, "-y"
             ]
-            process = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            await process.communicate()
-            if process.returncode == 0: return output_path
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                await process.communicate()
+                if process.returncode == 0: return output_path
+            except Exception as e:
+                logging.error(f"Execution error ({binary}): {e}")
             return ""
         else:
             return await self.download(url, filename)
