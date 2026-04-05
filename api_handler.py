@@ -55,15 +55,23 @@ class APIHandler:
         data = await self.fetch_json(url)
         episodes = []
         metadata = {}
-        if data.get("success") and "data" in data:
-            drama_data = data["data"]
+        
+        if data:
+            # Handle both wrapped {"success": true, "data": {...}} and direct responses
+            if data.get("success") and "data" in data and isinstance(data["data"], dict):
+                drama_data = data["data"]
+            else:
+                drama_data = data
+
             metadata = {
-                "cover": drama_data.get("cover"),
+                "cover": drama_data.get("cover") or drama_data.get("cs_cover_url"),
                 "description": drama_data.get("description") or drama_data.get("synopsis") or "No description available.",
                 "title": drama_data.get("title")
             }
-            if "episodes" in drama_data:
-                for ep in drama_data["episodes"]:
+            
+            eps_list = drama_data.get("episodes", [])
+            if eps_list:
+                for ep in eps_list:
                     v_url = ""
                     if "videos" in ep:
                         for v in ep["videos"]:
@@ -74,10 +82,10 @@ class APIHandler:
                             v_url = ep["videos"][0].get("url")
                     
                     episodes.append({
-                        "id": f"{drama_id}_{ep.get('episode')}",
+                        "id": f"{drama_id}_{ep.get('episode') or ep.get('episode_no')}",
                         "video_url": v_url,
                         "subtitle_url": ep.get("subtitle_url"),
-                        "episode_no": int(ep.get('episode', 0))
+                        "episode_no": int(ep.get('episode', ep.get('episode_no', 0)))
                     })
             episodes.sort(key=lambda x: x.get('episode_no', 0))
         return {"episodes": episodes, "metadata": metadata}
@@ -126,14 +134,21 @@ class APIHandler:
         url = f"{self.apis[source]}search?q={query}&lang=id&code={self.api_code}"
         data = await self.fetch_json(url)
         items = []
-        if data.get("success") and "data" in data:
-            results = data["data"]
+        if data:
+            results = []
+            if data.get("success") and "data" in data and isinstance(data["data"], list):
+                results = data["data"]
+            elif isinstance(data, list):
+                results = data
+            elif isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
+                results = data["data"]
+            
             for d in results:
                 items.append({
-                    "id": str(d.get("id")),
-                    "title": d.get("title"),
+                    "id": str(d.get("id") or d.get("bookId")),
+                    "title": d.get("title") or d.get("bookName"),
                     "source": source,
-                    "cover": d.get("cover")
+                    "cover": d.get("cover") or d.get("cs_cover_url")
                 })
         return items
 
