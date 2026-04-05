@@ -64,16 +64,25 @@ class APIHandler:
                 drama_data = data
 
             metadata = {
-                "cover": drama_data.get("cover") or drama_data.get("cs_cover_url"),
-                "description": drama_data.get("description") or drama_data.get("synopsis") or "No description available.",
-                "title": drama_data.get("title")
+                "cover": drama_data.get("cover") or drama_data.get("cs_cover_url") or drama_data.get("cover_url"),
+                "description": drama_data.get("description") or drama_data.get("synopsis") or drama_data.get("introduction") or "No description available.",
+                "title": drama_data.get("title") or drama_data.get("short_play_name")
             }
             
-            eps_list = drama_data.get("episodes", [])
+            eps_list = drama_data.get("episodes", drama_data.get("episode_list", []))
             if eps_list:
                 for ep in eps_list:
-                    v_url = ""
-                    if "videos" in ep:
+                    v_url = ep.get("play_url") # Direct play_url in idrama
+                    if not v_url and "play_info_list" in ep:
+                        # Fallback for idrama's nested play_info_list
+                        for v in ep["play_info_list"]:
+                            if v.get("definition") == "720p":
+                                v_url = v.get("play_url")
+                                break
+                        if not v_url and ep["play_info_list"]:
+                            v_url = ep["play_info_list"][0].get("play_url")
+                    
+                    if not v_url and "videos" in ep:
                         for v in ep["videos"]:
                             if v.get("quality") == "720P":
                                 v_url = v.get("url")
@@ -81,11 +90,12 @@ class APIHandler:
                         if not v_url and ep["videos"]:
                             v_url = ep["videos"][0].get("url")
                     
+                    ep_no = ep.get("episode") or ep.get("episode_no") or ep.get("episode_order") or 0
                     episodes.append({
-                        "id": f"{drama_id}_{ep.get('episode') or ep.get('episode_no')}",
+                        "id": f"{drama_id}_{ep_no}",
                         "video_url": v_url,
                         "subtitle_url": ep.get("subtitle_url"),
-                        "episode_no": int(ep.get('episode', ep.get('episode_no', 0)))
+                        "episode_no": int(ep_no)
                     })
             episodes.sort(key=lambda x: x.get('episode_no', 0))
         return {"episodes": episodes, "metadata": metadata}
@@ -146,9 +156,9 @@ class APIHandler:
             for d in results:
                 items.append({
                     "id": str(d.get("id") or d.get("bookId")),
-                    "title": d.get("title") or d.get("bookName"),
+                    "title": d.get("title") or d.get("bookName") or d.get("short_play_name"),
                     "source": source,
-                    "cover": d.get("cover") or d.get("cs_cover_url")
+                    "cover": d.get("cover") or d.get("cs_cover_url") or d.get("cover_url")
                 })
         return items
 
