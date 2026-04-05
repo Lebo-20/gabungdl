@@ -17,7 +17,7 @@ class Uploader:
         await self.client.start(bot_token=self.bot_token)
         logging.info("Telegram client started.")
 
-    async def send_photo_with_caption(self, photo_url: str, caption: str):
+    async def send_photo_with_caption(self, photo_url: str, caption: str, buttons=None):
         temp_photo = "temp_cover.jpg"
         try:
             async with aiohttp.ClientSession() as session:
@@ -31,13 +31,14 @@ class Uploader:
                             self.channel_id,
                             temp_photo,
                             caption=caption,
+                            buttons=buttons,
                             force_document=False # Always send as Photo
                         )
                         if os.path.exists(temp_photo):
                             os.remove(temp_photo)
                     else:
                         # Fallback to link if download fails
-                        await self.client.send_file(self.channel_id, photo_url, caption=caption, force_document=False)
+                        await self.client.send_file(self.channel_id, photo_url, caption=caption, buttons=buttons, force_document=False)
         except Exception as e:
             logging.error(f"Error sending photo: {e}")
             if os.path.exists(temp_photo): os.remove(temp_photo)

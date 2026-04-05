@@ -20,12 +20,20 @@ class Processor:
         cmd = [
             binary, "-i", sub_path, srt_path, "-y"
         ]
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        await process.communicate()
-        if process.returncode == 0 and os.path.exists(srt_path):
-            return srt_path
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            # 5 minute timeout for subtitle conversion
+            await asyncio.wait_for(process.communicate(), timeout=300)
+            if process.returncode == 0 and os.path.exists(srt_path):
+                return srt_path
+        except asyncio.TimeoutError:
+            logging.error("Subtitle conversion timed out.")
+            try: process.kill()
+            except: pass
+        except Exception as e:
+            logging.error(f"Subtitle conversion error: {e}")
         return None
 
     async def burn_subtitle(self, video_path, sub_path, output_name) -> str:
@@ -46,10 +54,20 @@ class Processor:
             output_path, "-y"
         ]
         
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        await process.communicate()
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            # Burning subtitles can take a long time (up to 1 hour for long videos)
+            await asyncio.wait_for(process.communicate(), timeout=3600)
+        except asyncio.TimeoutError:
+            logging.error("Burn subtitle timed out.")
+            try: process.kill()
+            except: pass
+            return ""
+        except Exception as e:
+            logging.error(f"Burn subtitle error: {e}")
+            return ""
         if process.returncode == 0:
             return output_path
         return ""
@@ -72,10 +90,20 @@ class Processor:
             "-c", "copy", "-movflags", "+faststart", output_path, "-y"
         ]
         
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        await process.communicate()
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            # 10 minute timeout for merging (copy mode)
+            await asyncio.wait_for(process.communicate(), timeout=600)
+        except asyncio.TimeoutError:
+            logging.error("Merge timed out.")
+            try: process.kill()
+            except: pass
+            return ""
+        except Exception as e:
+            logging.error(f"Merge error: {e}")
+            return ""
         
         if os.path.exists(list_path):
             os.remove(list_path)

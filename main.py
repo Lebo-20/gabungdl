@@ -2,7 +2,7 @@ import asyncio
 import os
 import json
 import logging
-from telethon import events
+from telethon import events, Button
 from api_handler import APIHandler
 from downloader import Downloader
 from processor import Processor
@@ -19,6 +19,9 @@ logging.basicConfig(
     ]
 )
 
+# Set Telethon logging to WARNING to reduce noise from FloodWait
+logging.getLogger('telethon').setLevel(logging.WARNING)
+
 class AutoBot:
     def __init__(self, config_file="config.json"):
         with open(config_file, 'r') as f:
@@ -32,7 +35,10 @@ class AutoBot:
         self.uploader = Uploader(self.config)
         self.check_interval = self.config.get("check_interval", 300)
         self.is_active = True
-        self.semaphore = asyncio.Semaphore(1) # Limit to 1 merge at a time for safety
+        self.semaphore = asyncio.Semaphore(1) 
+        self.bot_username = None
+        self._last_update = 0
+        self._last_percent = -1
 
     async def is_admin(self, event):
         sender_id = (await event.get_sender()).id
@@ -73,14 +79,14 @@ class AutoBot:
             # format: dl_<source>_<id>
             btn_data = f"dl_{item['source']}_{item['id']}"
             text += f"🎬 **{item['title']}** (`{item['source']}`)\n"
-            buttons.append([events.Button.inline(f"⬇️ {item['title'][:20]}...", btn_data)])
+            buttons.append([Button.inline(f"⬇️ {item['title'][:20]}...", btn_data)])
 
         # Pagination buttons
         nav_buttons = []
         if page_index > 0:
-            nav_buttons.append(events.Button.inline("⬅️ Prev", f"page_{page_index - 1}"))
+            nav_buttons.append(Button.inline("⬅️ Prev", f"page_{page_index - 1}"))
         if end < len(results):
-            nav_buttons.append(events.Button.inline("Next ➡️", f"page_{page_index + 1}"))
+            nav_buttons.append(Button.inline("Next ➡️", f"page_{page_index + 1}"))
         
         if nav_buttons:
             buttons.append(nav_buttons)
@@ -111,6 +117,22 @@ class AutoBot:
         if not await self.is_admin(event): 
             await event.reply("❌ Anda tidak memiliki akses ke bot ini.")
             return
+
+        # Handle deep links like /start cari_TITLE
+        args = event.message.message.split(' ', 1)
+        if len(args) > 1 and args[1].startswith("cari_"):
+            query = args[1][5:].replace("_", " ").strip()
+            if query:
+                logging.info(f"Admin triggered deep link search for: {query}")
+                results = await self.api.search_all(query)
+                if results:
+                    self.last_results = results
+                    await self.show_page(event, 0)
+                    return
+                else:
+                    await event.reply(f"Tidak ditemukan hasil untuk: `{query}`")
+                    return
+
         await event.reply(
             "👋 **Selamat datang di Bot Auto Downloader!**\n\n"
             "Bot ini otomatis memantau drama baru dan menggabungkannya.\n\n"
@@ -133,17 +155,29 @@ class AutoBot:
         return f"[{bar}] {percentage:.1f}%"
 
     async def progress_callback(self, current, total, status_msg, task_name, start_time):
-        # Throttle updates to avoid FloodWait (every 5 seconds or 10%)
+        # Throttle updates to avoid FloodWait in channels
+        # Increase throttle to 10 seconds and only if percentage changes significantly
         now = asyncio.get_event_loop().time()
-        if not hasattr(self, '_last_update'): self._last_update = 0
-        if now - self._last_update < 3: return
+        percent = int(current * 100 / total)
+        
+        # Update only every 10 seconds AND if percentage moved at least 5%
+        if now - self._last_update < 10:
+            if abs(percent - self._last_percent) < 10:
+                return
+                
         self._last_update = now
+        self._last_percent = percent
         
         elapsed = now - start_time
         bar = self.get_progress_bar(current, total)
         try:
-            await status_msg.edit(f"📤 **{task_name}:**\n{bar}\n⏱️ Elapsed: {int(elapsed)}s")
-        except: pass
+            # We use try/except as status_msg might have been deleted or we hit FloodWait
+            text = f"📤 **{task_name}:**\n{bar}\n⏱️ Elapsed: {int(elapsed)}s"
+            await status_msg.edit(text)
+        except Exception as e:
+            if "Flood" in str(e):
+                logging.warning(f"Throttling due to FloodWait on progress update: {e}")
+            pass
 
     async def process_item(self, item):
         async with self.semaphore:
@@ -152,8 +186,9 @@ class AutoBot:
             category = item.get("category")
             source = item.get("source")
 
-            if category != "search":
+            if category not in ["search", "manual"]:
                 if await self.db.is_processed(item_id) or await self.db.is_title_processed(title):
+                    logging.info(f"Drama already processed, skipping: {title}")
                     return
 
             logging.info(f"Processing Drama: {title} ({source})")
@@ -180,15 +215,24 @@ class AutoBot:
                 metadata = res.get("metadata", {})
 
                 if not episodes:
-                    await status_msg.edit(f"❌ **Error:** Tidak ada episode ditemukan untuk `[{source.capitalize()}] {title}`")
+                    logging.error(f"No episodes found for item {item_id}")
+                    if status_msg: await status_msg.edit(f"❌ **Error:** Tidak ada episode ditemukan untuk `[{source.capitalize()}] {title}`")
+                    await self.notify_admin(f"❌ **Error:** Gagal memproses `{title}` karena episode kosong.")
                     return
 
-                # Send Details Message (Photo + Synopsis)
+                # Send Details Message (Photo + Synopsis) + Search Button
                 cover = metadata.get("cover")
                 desc = metadata.get("description", "No description available.")
                 if cover:
                     info_caption = f"🎬 **[{source.capitalize()}] {title}**\n\n📝 **Sinopsis:**\n{desc[:800]}..."
-                    await self.uploader.send_photo_with_caption(cover, info_caption)
+                    
+                    import re
+                    # Keep only alphanumeric and spaces, then replace spaces with underscores for start= parameter
+                    # This obeys Telegram's [a-zA-Z0-9_-] constraint for deep links
+                    safe_title = re.sub(r'[^a-zA-Z0-9 ]', '', title).replace(" ", "_")[:64]
+                    search_btn = [[Button.url("🔍 Cari di Bot", f"https://t.me/{self.bot_username}?start=cari_{safe_title}")]]
+                    
+                    await self.uploader.send_photo_with_caption(cover, info_caption, buttons=search_btn)
 
                 # Now create the progress message (so it's AT THE BOTTOM)
                 status_msg = await self.uploader.client.send_message(
@@ -207,14 +251,19 @@ class AutoBot:
                     ep_vid_url = ep.get("video_url")
                     ep_sub_url = ep.get("subtitle_url")
                     if not ep_vid_url: continue
+                    
                     v_path = await self.downloader.download_m3u8(ep_vid_url, f"ep_{i}_{item_id}.mp4")
-                    if v_path:
-                        video_paths.append(v_path)
-                        s_path = ""
-                        if ep_sub_url:
-                            s_path = await self.downloader.download(ep_sub_url, f"ep_{i}_{item_id}.srt")
-                            s_path = await self.processor.convert_to_srt(s_path)
-                        sub_paths.append(s_path if s_path else None)
+                    if not v_path:
+                        logging.error(f"Failed to download episode {i} of {title}")
+                        await self.notify_admin(f"❌ **Error Download:** Gagal mengunduh episode {i+1} untuk `{title}`")
+                        return
+                    
+                    video_paths.append(v_path)
+                    s_path = ""
+                    if ep_sub_url:
+                        s_path = await self.downloader.download(ep_sub_url, f"ep_{i}_{item_id}.srt")
+                        s_path = await self.processor.convert_to_srt(s_path)
+                    sub_paths.append(s_path if s_path else None)
                     
                     if (i + 1) % 5 == 0 or (i + 1) == total:
                         bar = self.get_progress_bar(i+1, total)
@@ -224,13 +273,23 @@ class AutoBot:
                 output_fn = f"full_{item_id}.mp4"
                 merged_raw = await self.processor.merge_multiple_videos(video_paths, f"merged_raw_{item_id}.mp4")
                 
+                if not merged_raw:
+                    logging.error(f"Merge failed for {title}")
+                    await self.notify_admin(f"❌ **Error Merge:** Gagal menggabungkan video untuk `{title}`")
+                    return
+                    
                 status_sub = "no subtitle"
                 if any(sub_paths):
                     status_sub = "hardsub"
                     sub_to_burn = next((s for s in sub_paths if s), None)
                     final_video_path = await self.processor.burn_subtitle(merged_raw, sub_to_burn, output_fn)
                 else:
-                    final_video_path = await self.processor.merge_multiple_videos(video_paths, output_fn)
+                    final_video_path = merged_raw # Fallback to merged_raw if no sub or burn fails later
+                
+                if not final_video_path:
+                    logging.error(f"Burn sub or fallback failed for {title}")
+                    await self.notify_admin(f"❌ **Error Processor:** Gagal memproses output video untuk `{title}`")
+                    return
 
                 if final_video_path and os.path.exists(final_video_path):
                     start_upload = asyncio.get_event_loop().time()
@@ -295,18 +354,54 @@ class AutoBot:
         await self.db.init()
         await self.uploader.start()
         
+        # Get bot username for deep links
+        me = await self.uploader.client.get_me()
+        self.bot_username = me.username
         # Handlers
         self.uploader.client.add_event_handler(self.handle_start, events.NewMessage(pattern=r'/start'))
         self.uploader.client.add_event_handler(self.handle_search, events.NewMessage(pattern=r'/cari (.*)'))
+        self.uploader.client.add_event_handler(self.handle_download, events.NewMessage(pattern=r'/download (\w+) (\S+)'))
         self.uploader.client.add_event_handler(self.handle_update, events.NewMessage(pattern=r'/update'))
         self.uploader.client.add_event_handler(self.handle_callback, events.CallbackQuery)
         
-        logging.info("Bot started with /update support.")
+        logging.info("Bot started with manual /download support.")
         
         await asyncio.gather(
             self.uploader.client.run_until_disconnected(),
             self.background_loop()
         )
+
+    async def handle_download(self, event):
+        if not await self.is_admin(event): return
+        
+        source = event.pattern_match.group(1).lower()
+        item_id = event.pattern_match.group(2)
+        
+        # We need a title to start, we can try to fetch it first from API
+        await event.reply(f"🔍 Mencari data untuk `{item_id}` di `{source}`...")
+        
+        try:
+            res = {}
+            if source == "microdrama":
+                res = await self.api.get_microdrama_all_episodes(item_id)
+            elif source == "dramabox":
+                res = await self.api.get_dramabox_all_episodes(item_id)
+            else:
+                await event.reply(f"❌ Sumber `{source}` tidak didukung. Gunakan `microdrama` atau `dramabox`.")
+                return
+
+            metadata = res.get("metadata", {})
+            title = metadata.get("title")
+            
+            if not title:
+                await event.reply(f"❌ Tidak dapat menemukan drama dengan ID `{item_id}` di `{source}`.")
+                return
+            
+            await event.reply(f"✅ Ditemukan: **{title}**. Memulai proses download...")
+            asyncio.create_task(self.process_item({"id": item_id, "title": title, "source": source, "category": "manual"}))
+            
+        except Exception as e:
+            await event.reply(f"❌ Gagal mengambil data: {str(e)}")
 
     async def handle_update(self, event):
         if not await self.is_admin(event): return
