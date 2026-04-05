@@ -205,12 +205,7 @@ class AutoBot:
             final_video_path = ""
             
             try:
-                res = {}
-                if source == "microdrama":
-                    res = await self.api.get_microdrama_all_episodes(item_id)
-                elif source == "dramabox":
-                    res = await self.api.get_dramabox_all_episodes(item_id)
-
+                res = await self.api.get_all_episodes(source, item_id)
                 episodes = res.get("episodes", [])
                 metadata = res.get("metadata", {})
 
@@ -377,19 +372,15 @@ class AutoBot:
         source = event.pattern_match.group(1).lower()
         item_id = event.pattern_match.group(2)
         
-        # We need a title to start, we can try to fetch it first from API
+        if source not in self.api.apis:
+            supported = ", ".join(self.api.apis.keys())
+            await event.reply(f"❌ Sumber `{source}` tidak didukung.\n\nSumber yang tersedia: `{supported}`")
+            return
+
         await event.reply(f"🔍 Mencari data untuk `{item_id}` di `{source}`...")
         
         try:
-            res = {}
-            if source == "microdrama":
-                res = await self.api.get_microdrama_all_episodes(item_id)
-            elif source == "dramabox":
-                res = await self.api.get_dramabox_all_episodes(item_id)
-            else:
-                await event.reply(f"❌ Sumber `{source}` tidak didukung. Gunakan `microdrama` atau `dramabox`.")
-                return
-
+            res = await self.api.get_all_episodes(source, item_id)
             metadata = res.get("metadata", {})
             title = metadata.get("title")
             

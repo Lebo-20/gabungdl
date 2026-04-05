@@ -20,19 +20,21 @@ class APIHandler:
                 logging.error(f"Exception fetching {url}: {e}")
         return {}
 
-    async def get_microdrama_list(self, category="popular", page=1, limit=20) -> List[Dict[str, Any]]:
-        url = f"{self.apis['microdrama']}list?lang=id&page={page}&limit={limit}&code={self.api_code}"
+    async def get_list(self, source, category="popular", page=1, limit=20) -> List[Dict[str, Any]]:
+        if source not in self.apis: return []
+        
+        # microdrama pattern: base + list?lang=id...
+        url = f"{self.apis[source]}list?lang=id&page={page}&limit={limit}&code={self.api_code}"
         data = await self.fetch_json(url)
         items = []
         if data.get("success") and "data" in data:
-            # Nested data: data["data"]["data"]
             inner_data = data["data"].get("data", [])
             for d in inner_data:
                 items.append({
                     "id": str(d.get("id")),
                     "title": d.get("title"),
                     "category": category,
-                    "source": "microdrama"
+                    "source": source
                 })
         return items
 
@@ -43,8 +45,13 @@ class APIHandler:
             return data["data"]
         return {}
 
-    async def get_microdrama_all_episodes(self, drama_id) -> Dict[str, Any]:
-        url = f"{self.apis['microdrama']}drama/{drama_id}?lang=id&code={self.api_code}"
+    async def get_all_episodes(self, source, drama_id) -> Dict[str, Any]:
+        if source == "dramabox":
+            return await self.get_dramabox_all_episodes(drama_id)
+            
+        if source not in self.apis: return {"episodes": [], "metadata": {}}
+        
+        url = f"{self.apis[source]}drama/{drama_id}?lang=id&code={self.api_code}"
         data = await self.fetch_json(url)
         episodes = []
         metadata = {}
@@ -112,8 +119,11 @@ class APIHandler:
         data = await self.fetch_json(url)
         return data.get("data", {})
 
-    async def search_microdrama(self, query: str) -> List[Dict[str, Any]]:
-        url = f"{self.apis['microdrama']}search?q={query}&lang=id&code={self.api_code}"
+    async def search_source(self, source, query: str) -> List[Dict[str, Any]]:
+        if source == "dramabox": return await self.search_dramabox(query)
+        if source not in self.apis: return []
+        
+        url = f"{self.apis[source]}search?q={query}&lang=id&code={self.api_code}"
         data = await self.fetch_json(url)
         items = []
         if data.get("success") and "data" in data:
@@ -122,7 +132,7 @@ class APIHandler:
                 items.append({
                     "id": str(d.get("id")),
                     "title": d.get("title"),
-                    "source": "microdrama",
+                    "source": source,
                     "cover": d.get("cover")
                 })
         return items
@@ -144,8 +154,10 @@ class APIHandler:
 
     async def search_all(self, query: str) -> List[Dict[str, Any]]:
         results = []
-        # Run search concurrently for better speed
-        tasks = [self.search_microdrama(query), self.search_dramabox(query)]
+        tasks = []
+        for source in self.apis:
+            tasks.append(self.search_source(source, query))
+            
         all_results = await asyncio.gather(*tasks)
         for r in all_results:
             results.extend(r)
@@ -154,15 +166,15 @@ class APIHandler:
     # Helper function to consolidate data for downloading
     async def get_new_items(self) -> List[Dict[str, Any]]:
         """Fetches items from all sources and interleaves them to alternate processing."""
-        tasks = [
-            self.get_microdrama_list(category="popular"),
-            self.get_dramabox_homepage()
-        ]
+        tasks = []
+        for source in self.apis:
+            if source == "dramabox":
+                tasks.append(self.get_dramabox_homepage())
+            else:
+                tasks.append(self.get_list(source, category="popular"))
         
-        # Fetch all sources concurrently
         all_lists = await asyncio.gather(*tasks)
         
-        # Interleave the results: [List1[0], List2[0], List1[1], List2[1], ...]
         interleaved = []
         max_len = max(len(l) for l in all_lists) if all_lists else 0
         
